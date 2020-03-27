@@ -1,0 +1,336 @@
+---
+title: "Dublin Climate Analysis"
+author: "Navankur Verma - navankurverma@gmail.com"
+date: "03/01/2020"
+output: html_document
+##runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rio)
+library(tidyverse)
+library(lubridate)
+library(gganimate)
+library(gifski)
+library(png)
+library(ggridges)
+library(shiny)
+library(plotly)
+```
+
+## Loading the data
+
+```{r Data load}
+
+DublinAirport_daily <- read.csv("Data/dly532.csv",skip = 25, stringsAsFactors = FALSE)
+
+DublinAirport_daily$date1 <- parse_date_time(DublinAirport_daily$date, orders = "dmy")
+#
+DublinAirport_daily$Year <- as.numeric(substr(DublinAirport_daily$date1, 1, 4))
+DublinAirport_daily$Month <- as.numeric(substr(DublinAirport_daily$date1, 6, 7))
+DublinAirport_daily$Day <- as.numeric(substr(DublinAirport_daily$date1, 9, 10))
+# 
+
+DublinAirport_daily$Month <- factor(DublinAirport_daily$Month,
+                              levels = seq(1,12,by=1),
+                              labels = month.name)
+
+DublinAirport_daily$Season <- DublinAirport_daily$Month
+levels(DublinAirport_daily$Season) <- 
+  list("Winter" = c("December", "January", "February"), 
+       "Spring" = c("March","April","May"),
+       "Summer" = c("June","July","August"),
+       "Autumn" = c("September","October","November"))
+
+str(DublinAirport_daily)
+```
+
+4. Highest and Lowest Precipitation Months on average
+
+```{r High/Low Precipitation}
+# First using aggregate to calculate total rain in each month using daily measurement dataset
+
+rains <- aggregate(rain ~ Year+ Month,DublinAirport_daily, FUN = sum, na.rm = TRUE)
+
+y <- aggregate(rain ~ Month,rains, FUN= mean)
+colnames(y)<- c("Month","Avg_Rainfall")
+
+# The average total rainfall in each onth from 1942-2019 in Dublin:
+y
+
+ggplot(rains, aes(x = Month, y = rain)) + geom_boxplot()
+
+# Choosing only that row which has max and min Avg_rainfall
+y[c(which.max(y$Avg_Rainfall),which.min(y$Avg_Rainfall)),]
+
+# Daily Average rainfall in each day of a month:
+aggregate(DublinAirport_daily$rain, list(DublinAirport_daily$Month), FUN= mean, na.rm = TRUE)
+
+```
+
+5. New Factored Column
+
+```{r Factored Column}
+
+DublinAirport_monthly <- read.csv("Data/mly532.csv",skip = 19, stringsAsFactors = FALSE)
+
+DublinAirport_monthly$month <- factor(DublinAirport_monthly$month,
+                              levels = seq(1,12,by=1),
+                              labels = month.name)
+
+DublinAirport_monthly$season <- DublinAirport_monthly$month
+levels(DublinAirport_monthly$season) <- 
+  list("Winter" = c("December", "January", "February"), 
+       "Spring" = c("March","April","May"),
+       "Summer" = c("June","July","August"),
+       "Autumn" = c("September","October","November"))
+
+str(DublinAirport_monthly)
+
+```
+
+6. Assigning Classes
+
+```{r Assigning Classes}
+
+class(DublinAirport_monthly) <- c("WeatherData","data.frame")
+class(DublinAirport_monthly)
+```
+
+7. Summary of WeatherData
+
+```{r Summary method of Weather data}
+summary.WeatherData <- function(data){
+  cat('Summary:\n')
+  
+  # Running a FOR loop on 4,5,8,11 which are the the col numbers for Min Temp, Max Temp, Rainfall, Max Gust
+  for(i in c(4,5,8,11)){
+    cat('Season wise', colnames(data)[i],'summary:\n')
+    
+    #Using aggregate to list out each statistic for corresponding season
+    y1 <- aggregate(data[,i] ,list(data$season), FUN = mean, na.rm = TRUE)
+    y2 <- aggregate(data[,i] ,list(data$season), FUN = sd, na.rm = TRUE)
+    y3 <- aggregate(data[,i] ,list(data$season), FUN = max, na.rm = TRUE)
+    y4 <- aggregate(data[,i] ,list(data$season), FUN = min, na.rm = TRUE)
+    #Combining output of each to form a dataframe and then printing it
+    y<- data.frame(Season = y1$Group.1, Mean = y1$x, Std_Dev = y2$x,
+                   Max = y3$x, Min = y4$x)
+    print.data.frame(y)
+    cat('\n')
+    }
+}
+
+summary.WeatherData(DublinAirport_monthly)
+
+```
+
+8. Plotting
+
+```{r Plotting, fig.width=  8}
+
+# Using ymd command from lubridate library to convert Year and
+# Month from two seperate column into a single column Date
+DublinAirport_monthly$date <- ymd(
+  paste(
+    DublinAirport_monthly$year,
+    DublinAirport_monthly$month,
+    "01",
+    sep="-"))
+
+#Creating plot function which will have below arguments:
+#  Data - data to plot (Mandatory)
+#  Year1 & Year2 - Range of Years to plot for (Optional)
+#  Rain,Temp,Gust -  By default all will be shown, if only specific plot is required then set its variable TRUE.
+
+plot.WeatherData <- function(data, year1 = 2015, year2 = 2018,
+                             rain = FALSE,temp = FALSE, gust = FALSE){
+  year1 <- ymd(paste(year1,"01","01", sep = "-"))
+  year2 <- ymd(paste(year2,"12","01", sep = "-"))
+  
+  if(rain == FALSE & temp == FALSE & gust == FALSE){
+    rain = TRUE
+    temp = TRUE
+    gust = TRUE
+  }
+  
+  if(rain == FALSE & temp == TRUE & gust == FALSE){
+    lrange = c(min(data[data$date>= year1 & data$date <= year2,]$maxtp, 
+                  data[data$date>= year1 & data$date <= year2,]$mintp,
+                  na.rm = TRUE),
+              max(data[data$date>= year1 & data$date <= year2,]$maxtp, 
+                  data[data$date>= year1 & data$date <= year2,]$mintp,
+                  na.rm = TRUE) + 5)
+  }else{
+    lrange = c(min(data[data$date>= year1 & data$date <= year2,]$maxtp, 
+                  data[data$date>= year1 & data$date <= year2,]$mintp,
+                  data[data$date>= year1 & data$date <= year2,]$rain,
+                  data[data$date>= year1 & data$date <= year2,]$maxgt,na.rm = TRUE),
+              max(data[data$date>= year1 & data$date <= year2,]$maxtp, 
+                  data[data$date>= year1 & data$date <= year2,]$mintp,
+                  data[data$date>= year1 & data$date <= year2,]$rain,
+                  data[data$date>= year1 & data$date <= year2,]$maxgt,na.rm = TRUE))
+  }
+  
+  
+  plot(data$date[data$date>=year1 & data$date <= year2],
+     data$rain[data$date>=year1 & data$date <= year2],
+     type = "n", xlab = " ", ylab= " ",xaxt ='n',
+     ylim = lrange)
+  axis.Date(side = 1,
+          at = seq(year1,year2, by = "1 mon"),
+          format = "%y-%b",las = 2)
+  mtext("Time", side=1, line=4)
+  grid(lty = "dotted")
+  legend("topright", legend = c("Rain (mm)","Max Temp (C)", "Min Temp (C)", 
+          "Max Gust(knots)"), lty = c(1,1,1,1), lwd = c(1,3,3,1), 
+         col = c("Light Blue","Red","Green","Brown"), bty = "n")
+  title("Plot of WeatherData")
+  
+  if(rain == TRUE){
+    lines(data$date[data$date>= year1 & data$date <= year2],
+       data$rain[data$date>= year1 & data$date <= year2],
+       col = "Light blue", lwd = 3)
+    
+  }
+  if(temp == TRUE){
+    lines(data$date[data$date>= year1 & data$date <= year2],
+       data$maxtp[data$date>= year1 & data$date <= year2],
+       col = "Red", lwd = 3)
+    lines(data$date[data$date>= year1 & data$date <= year2],
+       data$mintp[data$date>= year1 & data$date <= year2],
+       col = "Green", lwd = 3)
+  #Using polygon to show range of Max and Min Temp
+    polygon(
+    c(data$date[data$date>= year1 & data$date <= year2],
+      rev(data$date[data$date>= year1 & data$date <= year2])),
+    c(data$maxtp[data$date>= year1 & data$date <= year2],
+      rev(data$mintp[data$date>= year1 & data$date <= year2])),
+    col=rgb(1, 1, 0.5,0.5), border = NA)
+  }
+  if(gust == TRUE){
+    lines(data$date[data$date>= year1 & data$date <= year2],
+       data$maxgt[data$date>= year1 & data$date <= year2],
+       col = "Brown")
+  }
+}
+
+```
+
+```{r , echo=FALSE}
+numericInput("year_from", "From Year", 2015)
+numericInput("year_to", "To Year", 2019)
+parameter <- c("Rainfall","Temperature","Higest Gust")
+p_value <- c("r","t","g")
+checkboxGroupInput("parameters", "Parameters to Plot (if none selected then all will be ploted):", choiceNames = parameter, choiceValues = p_value, selected = p_value)
+
+r1 = reactive(ifelse("r" %in% input$parameters, TRUE, FALSE))
+t1 = reactive(ifelse("t" %in% input$parameters, TRUE, FALSE))
+g1 = reactive(ifelse("g" %in% input$parameters, TRUE, FALSE))
+
+renderPlot(
+  plot.WeatherData(DublinAirport_monthly, year1 = input$year_from, year2 = input$year_to,
+  rain = r1(),temp = t1(), gust = g1())
+)
+
+```
+
+## Visualizing using hourly data
+
+```{r visualizing, fig.width= 8, fig.height= 10}
+
+DublinAirport_hourly <-read.csv("Data/hly532/hly532.csv",skip = 23, stringsAsFactors = FALSE)
+
+# Dublin.temp$date1 <- as.POSIXct(Dublin.temp$date,format = "%d-%b-%Y %H:%M")
+# Gives NA for date of type "dd-mar-yyy 01:00", it is due to SYS locale setting.
+
+# Using lubridate to convert string to date
+DublinAirport_hourly$date1 <- parse_date_time(DublinAirport_hourly$date, orders = "dmy HM")
+
+DublinAirport_hourly$Year <- as.integer(substr(DublinAirport_hourly$date1, 1, 4) )
+DublinAirport_hourly$Month <- as.numeric(substr(DublinAirport_hourly$date1, 6, 7) )
+DublinAirport_hourly$Day <- as.numeric(substr(DublinAirport_hourly$date1, 9, 10) )
+DublinAirport_hourly$Hour <- as.numeric(substr(DublinAirport_hourly$date1, 12, 13))
+DublinAirport_hourly$Month <- factor(DublinAirport_hourly$Month,
+                              levels = seq(1,12,by=1),
+                              labels = month.name)
+
+p2 <- ggplot(DublinAirport_hourly, aes(x = temp, y = Month, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3,rel_min_height = 0.01, gradient_lwd = 1.) +
+  scale_fill_viridis_c(name = "Temperature (in C)", option = "C") +
+  labs(title = "Distribution of Monthwise Temperature in Dublin :{closest_state}") +
+  transition_states(Year, transition_length = 31, state_length = 1, wrap = FALSE)
+
+animate(p2,  renderer = gifski_renderer("gganimq31_1.gif"))
+
+
+p1992 <- ggplot(DublinAirport_hourly[DublinAirport_hourly$Year == 1992,], aes(x = temp, y = Month, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3,rel_min_height = 0.01, gradient_lwd = 1.) +
+  scale_fill_viridis_c(name = "Temp.", option = "C") +
+  labs(title = "Dublin Temperature") +
+  xlim (-12,30)
+
+p2018 <- ggplot(DublinAirport_hourly[DublinAirport_hourly$Year == 2018,], aes(x = temp, y = Month, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3,rel_min_height = 0.01, gradient_lwd = 1.) +
+  scale_fill_viridis_c(name = "Temp.", option = "C") +
+  labs(title = "Dublin Temperature") +
+  xlim (-12,30)
+
+p4 <- ggplot(DublinAirport_hourly, aes(x = temp, y = Month, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3,rel_min_height = 0.01, gradient_lwd = 1.) +
+  scale_fill_viridis_c(name = "Temp.", option = "C") +
+  labs(title = "Distribution of Temperature in Dublin by Month : {frame_time}") +
+  transition_time(Year)
+
+animate(p4,renderer = gifski_renderer("gganim_tt.gif"))
+```
+
+```{r visualizing2}
+hourly_temp_dens <- ggplot(DublinAirport_hourly, aes(x = temp, frame = Year)) + 
+  theme(legend.position = "none",axis.text.y=element_blank(), axis.ticks.y = element_blank()) +
+  geom_density() + facet_wrap(~Month, scales = "free") +
+  theme(panel.spacing = unit(0.5, "lines"))
+
+ggplotly(hourly_temp_dens, width = 900, height = 900)
+
+daily_maxtemp_byMonth_dens <- ggplot(DublinAirport_daily, aes(x = maxtp, frame = Year)) + 
+  theme(legend.position = "none",axis.text.y=element_blank(), axis.ticks.y = element_blank()) +
+  geom_density() + facet_wrap(~Month, scales = "free") +
+  theme(panel.spacing = unit(0.5, "lines"))
+
+ggplotly(daily_maxtemp_byMonth_dens, width = 900, height = 900)
+
+daily_maxtemp_bySeason_dens <- ggplot(DublinAirport_daily, aes(x= maxtp, frame = Year)) +
+  theme(legend.position = "none",axis.text.y=element_blank(), axis.ticks.y = element_blank()) +
+  geom_density() + facet_wrap(~Season,scales = "free") +
+  theme(panel.spacing = unit(0.5, "lines"))
+
+ggplotly(daily_maxtemp_bySeason_dens, width = 900, height = 900)
+
+# agg1 <- aggregate(temp ~ Year,DublinAirport_hourly, FUN = max, na.rm = TRUE)
+# agg2 <- aggregate(temp ~ Year,DublinAirport_hourly, FUN = min, na.rm = TRUE)
+# 
+# aggvar <- aggregate(temp ~ Year, DublinAirport_hourly, FUN = var, na.rm = TRUE)
+# 
+# agg <- data.frame(Year = agg1$Year, mintp = agg2$temp, maxtp = agg1$temp)
+# 
+# aggmax <- aggregate(maxtp ~ Year + Month,DublinAirport_daily, FUN = max, na.rm = TRUE)
+# aggmin <- aggregate(mintp ~ Year + Month,DublinAirport_daily, FUN = max, na.rm = TRUE)
+# 
+# y <- aggmax[order(aggmax$Year),]
+# maxtmpts <- ts(y$maxtp, frequency = 12)
+# 
+# TC =  ma(maxtmpts, 12)
+# tsdisplay(TC)
+# 
+# pseudo_s = (maxtmpts - TC) - mean(maxtmpts - TC,na.rm = TRUE)
+# matrix_s = matrix(pseudo_s,nrow= 12)
+# s = rowMeans(matrix_s,na.rm = TRUE)
+# tsdisplay(rep(s,12))
+# 
+# Random = maxtmpts - TC - s
+# 
+# tsdisplay(Random)
+# 
+# lm1min = lm(aggmin[aggmin$Month == "January",]$mintp~time(aggmin[aggmin$Month == "January",]$mintp))
+```
